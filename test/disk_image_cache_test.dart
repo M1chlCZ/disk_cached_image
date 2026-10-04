@@ -42,19 +42,34 @@ void main() {
 
   test('overlapping fetches for the same key share one download', () async {
     var requests = 0;
-    final gate = Completer<void>();
+    final firstRequest = Completer<void>();
+    final release = Completer<void>();
     final cache = cacheWith(
       MockClient((request) async {
         requests++;
-        await gate.future;
+        if (!firstRequest.isCompleted) firstRequest.complete();
+        await release.future;
         return http.Response.bytes([1, 2, 3], 200);
       }),
     );
     final url = Uri.parse('https://example.com/a.png');
 
     final first = cache.fetch(url: url, cacheKey: 'a');
+    await firstRequest.future;
+    expect(requests, 1);
+
     final second = cache.fetch(url: url, cacheKey: 'a');
-    gate.complete();
+    var secondCompleted = false;
+    unawaited(second.then((_) => secondCompleted = true));
+
+    // Drain the event queue while the only HTTP request is blocked. If the
+    // second fetch did not join the in-flight download, it issues its own
+    // request during this drain and `requests` becomes 2.
+    await pumpEventQueue();
+    expect(requests, 1);
+    expect(secondCompleted, isFalse);
+
+    release.complete();
     final results = await Future.wait([first, second]);
 
     expect(requests, 1);
@@ -154,9 +169,10 @@ void main() {
     final directory = Directory('${tempDir.path}/disk_cached_image');
     await directory.create(recursive: true);
     await File('${directory.path}/real').writeAsBytes([1, 2, 3]);
-    await File('${directory.path}/real.tmp-1-2').writeAsBytes([4, 5, 6, 7]);
+    await File('${directory.path}/photo.tmp').writeAsBytes([4, 5]);
+    await File('${directory.path}/real.tmp-1-2').writeAsBytes([6, 7, 8, 9]);
 
-    expect(await cache.size(), 3);
+    expect(await cache.size(), 5);
     await cache.clear();
     expect(await directory.exists(), isFalse);
   });
@@ -176,6 +192,7 @@ void main() {
       'nul.txt',
       'CON',
       'LPT9',
+      'key.',
       'a' * 129,
     ];
 

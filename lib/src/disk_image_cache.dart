@@ -25,9 +25,9 @@ class DiskImageCacheResult {
 /// to [fetch]. A cached file is reused until it is removed with [evict] or
 /// [clear], or until it is older than the `maxAge` given to [fetch].
 ///
-/// Reuse one [DiskImageCache] instance for related images so that its HTTP
-/// client can pool connections. The client is owned by the cache and is never
-/// closed.
+/// The internal HTTP client lives for the lifetime of the cache instance and
+/// is never closed. Share one [DiskImageCache] instance across many images so
+/// that its client can pool connections.
 class DiskImageCache {
   /// Creates a [DiskImageCache].
   ///
@@ -60,6 +60,9 @@ class DiskImageCache {
   final String folderName;
 
   /// The maximum time to wait for the HTTP response.
+  ///
+  /// Only the future returned by [fetch] times out. The underlying HTTP
+  /// request is not aborted when the timeout elapses.
   final Duration timeout;
 
   late final http.Client _client = _providedClient ?? http.Client();
@@ -69,6 +72,8 @@ class DiskImageCache {
   static int _tempCounter = 0;
 
   static final RegExp _validKey = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]*$');
+
+  static final RegExp _tempFilePattern = RegExp(r'\.tmp-\d+-\d+$');
 
   static const int _maxKeyLength = 128;
 
@@ -107,9 +112,14 @@ class DiskImageCache {
   /// existing file is older than [maxAge]. With a `null` [maxAge] the file is
   /// kept until it is evicted.
   ///
+  /// The cache is keyed only by [cacheKey], never by [url]. When the URL for a
+  /// key changes, the previously cached bytes are still served; callers must
+  /// [evict] the key or use a distinct key per URL.
+  ///
   /// Overlapping calls for the same [cacheKey] share a single download and
-  /// receive the same result. The HTTP request is aborted with a
-  /// [TimeoutException] after [timeout].
+  /// receive the same result. The returned future times out with a
+  /// [TimeoutException] after [timeout]; the underlying HTTP request is not
+  /// aborted.
   ///
   /// Throws an [ArgumentError] when [cacheKey] is invalid. Throws an
   /// [HttpException] when the server responds with a status code other than
@@ -190,14 +200,15 @@ class DiskImageCache {
     final stem = key.split('.').first.toUpperCase();
     if (key.isEmpty ||
         key.length > _maxKeyLength ||
+        key.endsWith('.') ||
         !_validKey.hasMatch(key) ||
         _reservedDeviceNames.contains(stem)) {
       throw ArgumentError.value(
         key,
         name,
         'must be 1 to $_maxKeyLength characters, start with a letter or '
-        'digit, contain only letters, digits, ".", "_" and "-", and must '
-        'not be a Windows reserved device name',
+        'digit, contain only letters, digits, ".", "_" and "-", must not '
+        'end with ".", and must not be a Windows reserved device name',
       );
     }
   }
@@ -205,7 +216,7 @@ class DiskImageCache {
   static bool _isTempFile(File file) {
     final segments = file.uri.pathSegments;
     final name = segments.isEmpty ? file.path : segments.last;
-    return name.contains('.tmp');
+    return _tempFilePattern.hasMatch(name);
   }
 
   Future<DiskImageCacheResult> _download({

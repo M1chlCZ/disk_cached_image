@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import 'disk_image_cache.dart';
@@ -5,9 +7,8 @@ import 'disk_image_cache.dart';
 /// A widget that displays a network image from a [DiskImageCache].
 ///
 /// The image is downloaded once and served from disk on later builds. When a
-/// download refreshes a file that was rendered before, the stale bitmap is
-/// evicted from Flutter's in-memory image cache and the file is decoded
-/// again.
+/// download refreshes a file that was rendered before, the file is decoded
+/// again and shown without a blank frame.
 class DiskCachedImage extends StatefulWidget {
   /// Creates a [DiskCachedImage].
   const DiskCachedImage({
@@ -56,19 +57,41 @@ class DiskCachedImage extends StatefulWidget {
   ///
   /// Defaults to a new [DiskImageCache]. When the widget is rebuilt with a
   /// different cache, including `null`, the image is refetched with the new
-  /// cache and its bitmaps are evicted from Flutter's in-memory image cache.
-  /// Reuse one [DiskImageCache] instance across widgets so that its HTTP
-  /// client can pool connections.
+  /// cache. Reuse one [DiskImageCache] instance across widgets so that its
+  /// HTTP client can pool connections.
   final DiskImageCache? cache;
 
   @override
   State<DiskCachedImage> createState() => _DiskCachedImageState();
 }
 
+class _MtimeFileImage extends FileImage {
+  factory _MtimeFileImage(File file) =>
+      _MtimeFileImage._(file, _modifiedOf(file));
+
+  const _MtimeFileImage._(super.file, this.modified);
+
+  final DateTime modified;
+
+  static DateTime _modifiedOf(File file) {
+    try {
+      return file.statSync().modified;
+    } on FileSystemException {
+      return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    }
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is _MtimeFileImage && super == other && other.modified == modified;
+
+  @override
+  int get hashCode => Object.hash(super.hashCode, modified);
+}
+
 class _DiskCachedImageState extends State<DiskCachedImage> {
   late DiskImageCache _cache;
   late Future<DiskImageCacheResult> _file;
-  int _generation = 0;
 
   @override
   void initState() {
@@ -104,17 +127,12 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
     return _fetch(url);
   }
 
-  Future<DiskImageCacheResult> _fetch(Uri url) async {
-    final result = await _cache.fetch(
+  Future<DiskImageCacheResult> _fetch(Uri url) {
+    return _cache.fetch(
       url: url,
       cacheKey: widget.cacheKey,
       maxAge: widget.maxAge,
     );
-    if (result.downloaded) {
-      PaintingBinding.instance.imageCache.evict(FileImage(result.file));
-      _generation++;
-    }
-    return result;
   }
 
   @override
@@ -124,9 +142,9 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
       builder: (context, snapshot) {
         final result = snapshot.data;
         if (result != null) {
-          return Image.file(
-            result.file,
-            key: ValueKey<int>(_generation),
+          return Image(
+            image: _MtimeFileImage(result.file),
+            gaplessPlayback: true,
             width: widget.width,
             height: widget.height,
             fit: widget.fit,
