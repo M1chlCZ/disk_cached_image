@@ -6,17 +6,28 @@ import 'package:path_provider/path_provider.dart';
 /// The result of a [DiskImageCache.fetch] call.
 class DiskImageCacheResult {
   /// Creates a [DiskImageCacheResult].
-  const DiskImageCacheResult({required this.file, required this.downloaded});
+  const DiskImageCacheResult({
+    required this.file,
+    required this.downloaded,
+    required this.modified,
+  });
 
   /// The cached file on disk.
   final File file;
 
-  /// Whether the file was downloaded and written during the call that
-  /// produced this result.
+  /// Whether the file was downloaded during the call that produced this
+  /// result, or during the in-flight download that this call joined.
   ///
-  /// Waiters that join an in-flight download share the result of the call
-  /// that started it, so they also report `true`.
+  /// It is `false` for a cache hit. Waiters that join an in-flight download
+  /// share the result of the call that started it, so they also report
+  /// `true`.
   final bool downloaded;
+
+  /// The modification time of [file] when this result was produced.
+  ///
+  /// A fresh download reports a newer value than the file it replaced, which
+  /// lets callers tell refreshed bytes at the same path apart.
+  final DateTime modified;
 }
 
 /// A disk-backed cache for network images.
@@ -105,8 +116,8 @@ class DiskImageCache {
   /// Downloads [url] and stores it on disk under [cacheKey].
   ///
   /// Returns a [DiskImageCacheResult] whose [DiskImageCacheResult.downloaded]
-  /// is `true` when bytes were fetched and written during this call, and
-  /// `false` for a cache hit.
+  /// is `true` when this call downloaded the file or joined an in-flight
+  /// download, and `false` for a cache hit.
   ///
   /// A download only happens when no file exists for [cacheKey], or when the
   /// existing file is older than [maxAge]. With a `null` [maxAge] the file is
@@ -131,13 +142,15 @@ class DiskImageCache {
   }) async {
     _validateKey(cacheKey, 'cacheKey');
     final file = await _fileFor(cacheKey);
-    if (await file.exists()) {
-      if (maxAge == null) {
-        return DiskImageCacheResult(file: file, downloaded: false);
-      }
-      final age = DateTime.now().difference(await file.lastModified());
-      if (age <= maxAge) {
-        return DiskImageCacheResult(file: file, downloaded: false);
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.notFound) {
+      if (maxAge == null ||
+          DateTime.now().difference(stat.modified) <= maxAge) {
+        return DiskImageCacheResult(
+          file: file,
+          downloaded: false,
+          modified: stat.modified,
+        );
       }
     }
     final path = file.path;
@@ -244,7 +257,12 @@ class DiskImageCache {
       }
       rethrow;
     }
-    return DiskImageCacheResult(file: destination, downloaded: true);
+    final stat = await destination.stat();
+    return DiskImageCacheResult(
+      file: destination,
+      downloaded: true,
+      modified: stat.modified,
+    );
   }
 
   static Future<void> _replace(File source, File destination) async {

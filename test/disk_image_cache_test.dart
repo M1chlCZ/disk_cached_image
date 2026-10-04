@@ -37,6 +37,7 @@ void main() {
     expect(first.downloaded, isTrue);
     expect(second.downloaded, isFalse);
     expect(first.file.path, second.file.path);
+    expect(second.modified, first.modified);
     expect(await first.file.readAsBytes(), [1, 2, 3]);
   });
 
@@ -76,6 +77,7 @@ void main() {
     expect(results[0].downloaded, isTrue);
     expect(results[1].downloaded, isTrue);
     expect(results[0].file.path, results[1].file.path);
+    expect(results[0].modified, results[1].modified);
     expect(results[0].file.existsSync(), isTrue);
     expect(await results[0].file.readAsBytes(), [1, 2, 3]);
     expect(await results[1].file.readAsBytes(), [1, 2, 3]);
@@ -101,6 +103,7 @@ void main() {
     expect(requests, 2);
     expect(first.downloaded, isTrue);
     expect(second.downloaded, isTrue);
+    expect(second.modified.isBefore(first.modified), isFalse);
     expect(await second.file.readAsBytes(), [2]);
   });
 

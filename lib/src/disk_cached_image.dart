@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import 'disk_image_cache.dart';
@@ -46,8 +44,9 @@ class DiskCachedImage extends StatefulWidget {
   ///
   /// For decode failures it is passed to [Image.errorBuilder]. For fetch
   /// failures (including a malformed [url]) it is invoked directly with the
-  /// error and its stack trace. When `null`, a broken image icon is shown
-  /// instead.
+  /// error and its stack trace. When it is `null`, fetch failures show a
+  /// broken image icon, while decode failures render nothing and are reported
+  /// to [FlutterError] by [Image].
   final ImageErrorWidgetBuilder? errorBuilder;
 
   /// The maximum age of a cached file before it is downloaded again.
@@ -66,20 +65,9 @@ class DiskCachedImage extends StatefulWidget {
 }
 
 class _MtimeFileImage extends FileImage {
-  factory _MtimeFileImage(File file) =>
-      _MtimeFileImage._(file, _modifiedOf(file));
-
-  const _MtimeFileImage._(super.file, this.modified);
+  const _MtimeFileImage(super.file, this.modified);
 
   final DateTime modified;
-
-  static DateTime _modifiedOf(File file) {
-    try {
-      return file.statSync().modified;
-    } on FileSystemException {
-      return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-    }
-  }
 
   @override
   bool operator ==(Object other) =>
@@ -87,6 +75,11 @@ class _MtimeFileImage extends FileImage {
 
   @override
   int get hashCode => Object.hash(super.hashCode, modified);
+
+  @override
+  String toString() =>
+      '_MtimeFileImage("${file.path}", modified: $modified, '
+      'scale: ${scale.toStringAsFixed(1)})';
 }
 
 class _DiskCachedImageState extends State<DiskCachedImage> {
@@ -143,7 +136,7 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
         final result = snapshot.data;
         if (result != null) {
           return Image(
-            image: _MtimeFileImage(result.file),
+            image: _MtimeFileImage(result.file, result.modified),
             gaplessPlayback: true,
             width: widget.width,
             height: widget.height,
