@@ -30,12 +30,17 @@ supports Android, iOS, macOS, Windows, and Linux. Web is not supported.
 
 ## Installation
 
-Add the package to your `pubspec.yaml`:
+The package is not published on pub.dev yet. Add it to your `pubspec.yaml`
+from this repository with a path dependency:
 
 ```yaml
 dependencies:
-  disk_cached_image: ^0.1.0
+  disk_cached_image:
+    path: packages/disk_cached_image
 ```
+
+You can also depend on the Git repository directly and point at the package
+folder.
 
 ## Usage
 
@@ -89,8 +94,9 @@ DiskCachedImage(
 ```
 
 The widget shows `placeholder` while the file is being fetched. `errorBuilder`
-handles both fetch and decode failures; when it is omitted a broken image icon
-is shown.
+is used for fetch errors; when it is omitted, a broken image icon is shown. It
+is also passed to `Image.errorBuilder` for decode failures; when it is omitted
+there, nothing is rendered and Flutter logs the decode error.
 
 ### The `DiskImageCache` API
 
@@ -106,7 +112,9 @@ final DiskImageCacheResult result = await cache.fetch(
   maxAge: const Duration(days: 7),
 );
 print(result.file.path); // path of the cached file
-print(result.downloaded); // true when this call wrote the file
+print(result.modified); // modification time used to detect refreshes
+// true when this call downloaded the file (or joined an in-flight download)
+print(result.downloaded);
 
 // Remove a single entry.
 await cache.evict('coin-one');

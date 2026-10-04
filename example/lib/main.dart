@@ -18,12 +18,13 @@ class ExampleApp extends StatelessWidget {
 class ExamplePage extends StatelessWidget {
   const ExamplePage({super.key});
 
+  static final DiskImageCache _cache = DiskImageCache();
+
   Future<void> _clearCache(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
-    final cache = DiskImageCache();
-    final before = await cache.size();
-    await cache.clear();
-    final after = await cache.size();
+    final before = await _cache.size();
+    await _cache.clear();
+    final after = await _cache.size();
     messenger.showSnackBar(
       SnackBar(content: Text('Cache size: $before -> $after bytes')),
     );
@@ -37,21 +38,23 @@ class ExamplePage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Wrap(
+            Wrap(
               spacing: 16,
               children: [
                 DiskCachedImage(
                   url: 'https://picsum.photos/seed/one/200',
                   cacheKey: 'picsum-one',
+                  cache: _cache,
                   width: 120,
                   height: 120,
                 ),
                 DiskCachedImage(
                   url: 'https://picsum.photos/seed/two/200',
                   cacheKey: 'picsum-two',
+                  cache: _cache,
                   width: 120,
                   height: 120,
-                  placeholder: Center(child: CircularProgressIndicator()),
+                  placeholder: const Center(child: CircularProgressIndicator()),
                   errorBuilder: _buildError,
                 ),
               ],
