@@ -63,9 +63,6 @@ void main() {
     var secondCompleted = false;
     unawaited(second.then((_) => secondCompleted = true));
 
-    // Drain the event queue while the only HTTP request is blocked. If the
-    // second fetch did not join the in-flight download, it issues its own
-    // request during this drain and `requests` becomes 2.
     await pumpEventQueue();
     expect(requests, 1);
     expect(secondCompleted, isFalse);
