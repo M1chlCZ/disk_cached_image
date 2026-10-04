@@ -45,8 +45,9 @@ class DiskCachedImage extends StatefulWidget {
   /// For decode failures it is passed to [Image.errorBuilder]. For fetch
   /// failures (including a malformed [url]) it is invoked directly with the
   /// error and its stack trace. When it is `null`, fetch failures show a
-  /// broken image icon, while decode failures render nothing and are reported
-  /// to [FlutterError] by [Image].
+  /// broken image icon, while decode failures render nothing in release
+  /// builds; in debug builds Flutter renders its own error placeholder and
+  /// logs the error.
   final ImageErrorWidgetBuilder? errorBuilder;
 
   /// The maximum age of a cached file before it is downloaded again.

@@ -96,7 +96,8 @@ DiskCachedImage(
 The widget shows `placeholder` while the file is being fetched. `errorBuilder`
 is used for fetch errors; when it is omitted, a broken image icon is shown. It
 is also passed to `Image.errorBuilder` for decode failures; when it is omitted
-there, nothing is rendered and Flutter logs the decode error.
+there, decode failures render nothing in release builds, while in debug builds
+Flutter renders its own error placeholder and logs the decode error.
 
 ### The `DiskImageCache` API
 

@@ -25,8 +25,10 @@ class DiskImageCacheResult {
 
   /// The modification time of [file] when this result was produced.
   ///
-  /// A fresh download reports a newer value than the file it replaced, which
-  /// lets callers tell refreshed bytes at the same path apart.
+  /// A fresh download usually reports a newer value than the file it replaced,
+  /// which lets callers tell refreshed bytes at the same path apart. File
+  /// system timestamp granularity can make the new value equal to the previous
+  /// one, so a TTL below that tick may not detect the refresh.
   final DateTime modified;
 }
 
