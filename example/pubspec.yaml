@@ -1,0 +1,19 @@
+name: disk_cached_image_example
+description: Example app for the disk_cached_image package.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  disk_cached_image:
+    path: ../
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
