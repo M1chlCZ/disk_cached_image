@@ -138,6 +138,16 @@ Notes:
 - `DiskImageCache` takes an optional `client` and `directoryProvider`, which is
   useful for tests.
 
+## Example
+
+A runnable app that renders two cached images and clears the cache lives in
+[`example/`](example/).
+
+## Screenshot
+
+A screenshot for the pub.dev listing is not included yet. Run the example app
+to see the cached images and the clear-cache action.
+
 ## License
 
 See [LICENSE](LICENSE).

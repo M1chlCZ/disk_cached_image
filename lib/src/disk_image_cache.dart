@@ -131,7 +131,7 @@ class DiskImageCache {
   ///
   /// Overlapping calls for the same [cacheKey] share a single download and
   /// receive the same result. The returned future times out with a
-  /// [TimeoutException] after [timeout]; the underlying HTTP request is not
+  /// `TimeoutException` after [timeout]; the underlying HTTP request is not
   /// aborted.
   ///
   /// Throws an [ArgumentError] when [cacheKey] is invalid. Throws an
