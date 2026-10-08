@@ -1,152 +1,79 @@
 # disk_cached_image
 
-A Flutter widget and cache service that downloads network images to disk once,
-serves them from disk on later builds and app launches, and supports TTL,
-eviction, and clearing.
+A Flutter widget and cache service that downloads network images to disk once
+and serves them from disk on later builds and app launches.
 
 ## Features
 
-- **Disk persistence** — images are stored as files so they survive app
-  restarts and are not downloaded again.
-- **TTL** — pass `maxAge` to `DiskCachedImage` or `DiskImageCache.fetch` to
-  re-download a file that is older than the given duration.
-- **Eviction** — remove one entry with `DiskImageCache.evict`, or the whole
-  cache folder with `DiskImageCache.clear`.
-- **Atomic writes** — a download is first written to a temporary file and then
-  renamed into place, so an interrupted download never leaves a corrupt entry.
-- **Single-flight downloads** — concurrent fetches for the same cache key share
-  one HTTP request and receive the same result.
-- **Key validation** — cache keys are rejected when they could escape the cache
-  folder or clash with Windows reserved device names.
-- **Cache size** — `DiskImageCache.size` returns the total number of bytes
-  stored on disk.
-- **Gapless refresh** — when a stale file is replaced, the new bitmap is shown
-  without a blank frame in between.
+- `DiskCachedImage` widget that renders a cached file
+- `DiskImageCache` service with `fetch`, `evict`, `clear`, and `size`
+- TTL refresh with `maxAge`
+- Atomic writes through a temporary file and a rename
+- Single-flight downloads: concurrent fetches for one key share one request
+- Cache key validation against path traversal and Windows device names
+- Gapless refresh: a stale image is replaced without a blank frame
 
-## Platforms
+## Install
 
-The package uses `dart:io` and `path_provider` to read and write files, so it
-supports Android, iOS, macOS, Windows, and Linux. Web is not supported.
-
-## Installation
-
-The package is not published on pub.dev yet. Add it to your `pubspec.yaml`
-from this repository with a path dependency:
-
-```yaml
-dependencies:
-  disk_cached_image:
-    path: packages/disk_cached_image
+```bash
+flutter pub add disk_cached_image
 ```
-
-You can also depend on the Git repository directly and point at the package
-folder.
 
 ## Usage
-
-### The `DiskCachedImage` widget
-
-`DiskCachedImage` downloads the image once and renders it from disk on every
-later build:
-
-```dart
-import 'package:disk_cached_image/disk_cached_image.dart';
-import 'package:flutter/material.dart';
-
-class CoinAvatar extends StatelessWidget {
-  const CoinAvatar({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const DiskCachedImage(
-      url: 'https://picsum.photos/seed/one/200',
-      cacheKey: 'coin-one',
-      width: 64,
-      height: 64,
-      maxAge: Duration(days: 7),
-      placeholder: Center(child: CircularProgressIndicator()),
-      errorBuilder: _buildError,
-    );
-  }
-
-  static Widget _buildError(
-    BuildContext context,
-    Object error,
-    StackTrace? stackTrace,
-  ) {
-    return const Icon(Icons.broken_image, size: 64);
-  }
-}
-```
-
-`cacheKey` is required and identifies the file in the cache. Reuse one
-`DiskImageCache` through the `cache` parameter to share the underlying HTTP
-client between many images:
 
 ```dart
 final cache = DiskImageCache();
 
 DiskCachedImage(
-  url: 'https://picsum.photos/seed/two/200',
-  cacheKey: 'coin-two',
+  url: 'https://picsum.photos/seed/one/200',
+  cacheKey: 'coin-one',
+  width: 64,
+  height: 64,
+  maxAge: const Duration(days: 7),
   cache: cache,
-)
+  placeholder: const Center(child: CircularProgressIndicator()),
+  errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image),
+);
 ```
 
-The widget shows `placeholder` while the file is being fetched. `errorBuilder`
-is used for fetch errors; when it is omitted, a broken image icon is shown. It
-is also passed to `Image.errorBuilder` for decode failures; when it is omitted
-there, decode failures render nothing in release builds, while in debug builds
-Flutter renders its own error placeholder and logs the decode error.
+The `cacheKey` identifies the file in the cache and is required. Share one
+`DiskImageCache` between images to reuse its HTTP client.
 
-### The `DiskImageCache` API
+Fetch files without the widget:
 
 ```dart
-import 'package:disk_cached_image/disk_cached_image.dart';
-
-final cache = DiskImageCache();
-
-// Fetch a file, downloading it when it is missing or older than maxAge.
 final DiskImageCacheResult result = await cache.fetch(
   url: Uri.parse('https://picsum.photos/seed/one/200'),
   cacheKey: 'coin-one',
   maxAge: const Duration(days: 7),
 );
+
 print(result.file.path); // path of the cached file
-print(result.modified); // modification time used to detect refreshes
-// true when this call downloaded the file (or joined an in-flight download)
-print(result.downloaded);
+print(result.downloaded); // true when this call downloaded the file
 
-// Remove a single entry.
 await cache.evict('coin-one');
-
-// Total bytes stored in the cache.
 final int bytes = await cache.size();
-
-// Remove every cached file.
 await cache.clear();
 ```
 
 Notes:
 
-- The cache is keyed by `cacheKey` only, not by URL. If the URL behind a key
-  changes, call `evict` or use a new key.
-- A `null` `maxAge` keeps a file until it is evicted or cleared.
+- The cache uses `cacheKey` only, not the URL. Use a new key or call `evict`
+  when the URL changes.
+- A `null` `maxAge` keeps a file until eviction or clearing.
 - `fetch` throws an `ArgumentError` for an invalid key, an `HttpException` for
-  a non-200 response, and a `TimeoutException` when the request exceeds the
-  cache `timeout` (30 seconds by default).
-- `DiskImageCache` takes an optional `client` and `directoryProvider`, which is
-  useful for tests.
+  a non-200 response, and a `TimeoutException` after the cache timeout (30
+  seconds by default).
+- `DiskImageCache` accepts a `client` and a `directoryProvider` for tests.
+
+## Platforms
+
+The package reads and writes files with `dart:io` and `path_provider`. It
+supports Android, iOS, macOS, Windows, and Linux. Web is not supported.
 
 ## Example
 
-A runnable app that renders two cached images and clears the cache lives in
-[`example/`](example/).
-
-## Screenshot
-
-A screenshot for the pub.dev listing is not included yet. Run the example app
-to see the cached images and the clear-cache action.
+The [`example/`](example/) app renders two cached images and clears the cache.
 
 ## License
 
