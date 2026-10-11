@@ -15,38 +15,39 @@ class DiskImageCacheResult {
   /// The cached file on disk.
   final File file;
 
-  /// Whether the file was downloaded during the call that produced this
-  /// result, or during the in-flight download that this call joined.
+  /// Whether the cache downloaded the file during this call, or during the
+  /// in-flight download that this call joined.
   ///
   /// It is `false` for a cache hit. Waiters that join an in-flight download
   /// share the result of the call that started it, so they also report
   /// `true`.
   final bool downloaded;
 
-  /// The modification time of [file] when this result was produced.
+  /// The modification time of [file] when the call produced this result.
   ///
   /// A fresh download usually reports a newer value than the file it replaced,
-  /// which lets callers tell refreshed bytes at the same path apart. File
-  /// system timestamp granularity can make the new value equal to the previous
-  /// one, so a TTL below that tick may not detect the refresh.
+  /// so callers can tell refreshed bytes at the same path apart. File system
+  /// timestamp granularity can make the new value equal to the previous one,
+  /// so a TTL below that tick can miss the refresh.
   final DateTime modified;
 }
 
 /// A disk-backed cache for network images.
 ///
-/// Files are stored in a dedicated folder and named by the `cacheKey` passed
-/// to [fetch]. A cached file is reused until it is removed with [evict] or
-/// [clear], or until it is older than the `maxAge` given to [fetch].
+/// The cache stores files in a dedicated folder and names each file by the
+/// `cacheKey` passed to [fetch]. The cache reuses a file until [evict] or
+/// [clear] removes it, or until the file is older than the `maxAge` given to
+/// [fetch].
 ///
-/// The internal HTTP client lives for the lifetime of the cache instance and
-/// is never closed. Share one [DiskImageCache] instance across many images so
-/// that its client can pool connections.
+/// The internal HTTP client lives for the lifetime of the cache instance. The
+/// cache never closes it. Share one [DiskImageCache] instance across many
+/// images so that its client can pool connections.
 class DiskImageCache {
   /// Creates a [DiskImageCache].
   ///
-  /// The [client] is used to download images. When it is omitted, a shared
-  /// [http.Client] owned by this cache is created lazily. The client is not
-  /// closed by the cache, so callers should reuse the same cache instance.
+  /// The cache uses the [client] to download images. When [client] is
+  /// omitted, the cache creates its own [http.Client] on first use. The cache
+  /// does not close the client, so callers share one cache instance.
   ///
   /// The [directoryProvider] returns the base directory that contains the
   /// cache folder. It defaults to [getApplicationDocumentsDirectory].
@@ -74,8 +75,8 @@ class DiskImageCache {
 
   /// The maximum time to wait for the HTTP response.
   ///
-  /// Only the future returned by [fetch] times out. The underlying HTTP
-  /// request is not aborted when the timeout elapses.
+  /// Only the future returned by [fetch] times out. The cache does not abort
+  /// the underlying HTTP request when the timeout elapses.
   final Duration timeout;
 
   late final http.Client _client = _providedClient ?? http.Client();
@@ -122,17 +123,17 @@ class DiskImageCache {
   /// download, and `false` for a cache hit.
   ///
   /// A download only happens when no file exists for [cacheKey], or when the
-  /// existing file is older than [maxAge]. With a `null` [maxAge] the file is
-  /// kept until it is evicted.
+  /// existing file is older than [maxAge]. With a `null` [maxAge], the cache
+  /// keeps the file until eviction.
   ///
-  /// The cache is keyed only by [cacheKey], never by [url]. When the URL for a
-  /// key changes, the previously cached bytes are still served; callers must
-  /// [evict] the key or use a distinct key per URL.
+  /// The cache identifies a file by [cacheKey] only, never by [url]. When the
+  /// URL for a key changes, the cache still serves the cached bytes. Callers
+  /// must [evict] the key or use a distinct key for each URL.
   ///
   /// Overlapping calls for the same [cacheKey] share a single download and
   /// receive the same result. The returned future times out with a
-  /// `TimeoutException` after [timeout]; the underlying HTTP request is not
-  /// aborted.
+  /// `TimeoutException` after [timeout]. The cache does not abort the
+  /// underlying HTTP request.
   ///
   /// Throws an [ArgumentError] when [cacheKey] is invalid. Throws an
   /// [HttpException] when the server responds with a status code other than
@@ -187,7 +188,7 @@ class DiskImageCache {
 
   /// Returns the total size of all cached files in bytes.
   ///
-  /// Temporary files left behind by interrupted downloads are not counted.
+  /// The cache does not count temporary files from interrupted downloads.
   /// Returns `0` when the cache folder does not exist.
   Future<int> size() async {
     final directory = await _cacheDirectory();

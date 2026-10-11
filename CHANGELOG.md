@@ -1,3 +1,7 @@
+## 0.1.2
+
+- Documentation and internal cleanup.
+
 ## 0.1.1
 
 - Rewrite the README. The install section now uses

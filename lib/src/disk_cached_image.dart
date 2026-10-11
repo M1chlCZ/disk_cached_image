@@ -4,9 +4,9 @@ import 'disk_image_cache.dart';
 
 /// A widget that displays a network image from a [DiskImageCache].
 ///
-/// The image is downloaded once and served from disk on later builds. When a
-/// download refreshes a file that was rendered before, the file is decoded
-/// again and shown without a blank frame.
+/// The widget downloads the image once and serves it from disk on later
+/// builds. When a download refreshes a rendered file, the widget decodes the
+/// new bytes and shows them without a blank frame.
 class DiskCachedImage extends StatefulWidget {
   /// Creates a [DiskCachedImage].
   const DiskCachedImage({
@@ -22,7 +22,7 @@ class DiskCachedImage extends StatefulWidget {
     this.cache,
   });
 
-  /// The URL the image is downloaded from.
+  /// The URL to download the image from.
   final String url;
 
   /// The key that identifies the image inside the disk cache.
@@ -34,31 +34,32 @@ class DiskCachedImage extends StatefulWidget {
   /// The height of the rendered image.
   final double? height;
 
-  /// How the image should be inscribed into the available space.
+  /// How the widget inscribes the image into the available space.
   final BoxFit fit;
 
-  /// The widget shown while the image is being fetched from disk.
+  /// The widget shown while the image loads from disk.
   final Widget? placeholder;
 
   /// The builder used when fetching or decoding the image fails.
   ///
-  /// For decode failures it is passed to [Image.errorBuilder]. For fetch
-  /// failures (including a malformed [url]) it is invoked directly with the
+  /// For decode failures, the widget passes it to [Image.errorBuilder]. For
+  /// fetch failures, including a malformed [url], the widget calls it with the
   /// error and its stack trace. When it is `null`, fetch failures show a
-  /// broken image icon, while decode failures render nothing in release
-  /// builds; in debug builds Flutter renders its own error placeholder and
-  /// logs the error.
+  /// broken image icon. Decode failures render nothing in release builds. In
+  /// debug builds Flutter renders its own error placeholder and logs the
+  /// error.
   final ImageErrorWidgetBuilder? errorBuilder;
 
-  /// The maximum age of a cached file before it is downloaded again.
+  /// The maximum age of a cached file before the cache downloads the file
+  /// again.
   final Duration? maxAge;
 
-  /// The cache used to fetch the image.
+  /// The cache that fetches the image.
   ///
-  /// Defaults to a new [DiskImageCache]. When the widget is rebuilt with a
-  /// different cache, including `null`, the image is refetched with the new
-  /// cache. Reuse one [DiskImageCache] instance across widgets so that its
-  /// HTTP client can pool connections.
+  /// Defaults to a new [DiskImageCache]. When the widget rebuilds with a
+  /// different cache, including `null`, the widget fetches the image again
+  /// with the new cache. Share one [DiskImageCache] instance across widgets so
+  /// that its HTTP client can pool connections.
   final DiskImageCache? cache;
 
   @override
