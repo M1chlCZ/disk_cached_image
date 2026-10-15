@@ -1,3 +1,13 @@
+## 0.2.0
+
+- HTTP revalidation: the cache stores ETag and Last-Modified values and sends
+  conditional requests. A 304 keeps the file and refreshes its timestamp.
+- `staleWhileRevalidate`: a stale file is served immediately while the refresh
+  runs in the background. The result carries a `refresh` future.
+- `precache` and `precacheAll` warm the cache without rendering.
+- `clearByPattern` removes entries by URL prefix (String) or match (RegExp).
+- Entries now keep a JSON metadata sidecar under `.metadata/`.
+
 ## 0.1.2
 
 - Documentation and internal cleanup.

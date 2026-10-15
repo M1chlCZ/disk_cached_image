@@ -19,6 +19,7 @@ class DiskCachedImage extends StatefulWidget {
     this.placeholder,
     this.errorBuilder,
     this.maxAge,
+    this.staleWhileRevalidate = false,
     this.cache,
   });
 
@@ -54,6 +55,13 @@ class DiskCachedImage extends StatefulWidget {
   /// again.
   final Duration? maxAge;
 
+  /// Whether the cache serves a stale file immediately and refreshes it in
+  /// the background.
+  ///
+  /// The widget redraws with the refreshed bytes when the refresh finishes.
+  /// It keeps the stale image when the refresh fails.
+  final bool staleWhileRevalidate;
+
   /// The cache that fetches the image.
   ///
   /// Defaults to a new [DiskImageCache]. When the widget rebuilds with a
@@ -87,6 +95,7 @@ class _MtimeFileImage extends FileImage {
 class _DiskCachedImageState extends State<DiskCachedImage> {
   late DiskImageCache _cache;
   late Future<DiskImageCacheResult> _file;
+  var _generation = 0;
 
   @override
   void initState() {
@@ -105,6 +114,7 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
     if (widget.url != oldWidget.url ||
         widget.cacheKey != oldWidget.cacheKey ||
         widget.maxAge != oldWidget.maxAge ||
+        widget.staleWhileRevalidate != oldWidget.staleWhileRevalidate ||
         cacheChanged) {
       _file = _load();
     }
@@ -123,11 +133,26 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
   }
 
   Future<DiskImageCacheResult> _fetch(Uri url) {
-    return _cache.fetch(
-      url: url,
-      cacheKey: widget.cacheKey,
-      maxAge: widget.maxAge,
-    );
+    final generation = ++_generation;
+    return _cache
+        .fetch(
+          url: url,
+          cacheKey: widget.cacheKey,
+          maxAge: widget.maxAge,
+          staleWhileRevalidate: widget.staleWhileRevalidate,
+        )
+        .then((result) {
+          final refresh = result.refresh;
+          if (refresh != null) {
+            refresh.then((refreshed) {
+              if (!mounted || generation != _generation) return;
+              setState(() {
+                _file = Future.value(refreshed);
+              });
+            });
+          }
+          return result;
+        });
   }
 
   @override

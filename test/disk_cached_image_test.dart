@@ -301,4 +301,55 @@ void main() {
       await _pumpUntilPixel(tester, const ui.Color(0xFF0000FF));
     });
   });
+
+  testWidgets('staleWhileRevalidate redraws with the refreshed bytes', (
+    tester,
+  ) async {
+    final tempDir = Directory.systemTemp.createTempSync(
+      'disk_cached_image_widget',
+    );
+    addTearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+    var requests = 0;
+    late List<int> redPng;
+    late List<int> bluePng;
+    final cache = DiskImageCache(
+      client: MockClient((request) async {
+        requests++;
+        return http.Response.bytes(requests == 1 ? redPng : bluePng, 200);
+      }),
+      directoryProvider: () async => tempDir,
+    );
+
+    await tester.runAsync(() async {
+      redPng = await _solidPng(const ui.Color(0xFFFF0000));
+      bluePng = await _solidPng(const ui.Color(0xFF0000FF));
+
+      Widget build(Duration? maxAge) => MaterialApp(
+        home: DiskCachedImage(
+          url: 'https://example.com/swr.png',
+          cacheKey: 'swr',
+          cache: cache,
+          width: 4,
+          height: 4,
+          maxAge: maxAge,
+          staleWhileRevalidate: true,
+        ),
+      );
+
+      await tester.pumpWidget(build(null));
+      await _pumpUntilImage(tester);
+      expect(await _renderedPixel(tester), const ui.Color(0xFFFF0000));
+      expect(requests, 1);
+
+      await File(
+        '${tempDir.path}/disk_cached_image/swr',
+      ).setLastModified(DateTime.now().subtract(const Duration(minutes: 5)));
+
+      await tester.pumpWidget(build(const Duration(minutes: 1)));
+      await _pumpUntil(tester, () => requests == 2);
+      await _pumpUntilPixel(tester, const ui.Color(0xFF0000FF));
+    });
+  });
 }

@@ -219,4 +219,187 @@ void main() {
       );
     }
   });
+
+  test('revalidates with ETag and keeps the file on 304', () async {
+    var requests = 0;
+    final conditional = <String?>[];
+    final cache = cacheWith(
+      MockClient((request) async {
+        requests++;
+        conditional.add(request.headers['If-None-Match']);
+        if (requests == 1) {
+          return http.Response.bytes([1, 2, 3], 200, headers: {'etag': '"v1"'});
+        }
+        return http.Response('', 304);
+      }),
+    );
+    final url = Uri.parse('https://example.com/a.png');
+    const maxAge = Duration(minutes: 1);
+
+    final first = await cache.fetch(url: url, cacheKey: 'a', maxAge: maxAge);
+    await first.file.setLastModified(
+      DateTime.now().subtract(const Duration(minutes: 5)),
+    );
+    final second = await cache.fetch(url: url, cacheKey: 'a', maxAge: maxAge);
+
+    expect(requests, 2);
+    expect(conditional, [null, '"v1"']);
+    expect(second.downloaded, isFalse);
+    expect(await second.file.readAsBytes(), [1, 2, 3]);
+    expect(second.modified.isAfter(first.modified), isTrue);
+  });
+
+  test('revalidates with Last-Modified and replaces the file on 200', () async {
+    var requests = 0;
+    final conditional = <String?>[];
+    final cache = cacheWith(
+      MockClient((request) async {
+        requests++;
+        conditional.add(request.headers['If-Modified-Since']);
+        if (requests == 1) {
+          return http.Response.bytes(
+            [1],
+            200,
+            headers: {'last-modified': 'Mon, 01 Jan 2024 00:00:00 GMT'},
+          );
+        }
+        return http.Response.bytes([2], 200);
+      }),
+    );
+    final url = Uri.parse('https://example.com/b.png');
+    const maxAge = Duration(minutes: 1);
+
+    final first = await cache.fetch(url: url, cacheKey: 'b', maxAge: maxAge);
+    await first.file.setLastModified(
+      DateTime.now().subtract(const Duration(minutes: 5)),
+    );
+    final second = await cache.fetch(url: url, cacheKey: 'b', maxAge: maxAge);
+
+    expect(requests, 2);
+    expect(conditional, [null, 'Mon, 01 Jan 2024 00:00:00 GMT']);
+    expect(second.downloaded, isTrue);
+    expect(await second.file.readAsBytes(), [2]);
+  });
+
+  test(
+    'serves a stale file immediately and refreshes in the background',
+    () async {
+      var requests = 0;
+      final cache = cacheWith(
+        MockClient((request) async {
+          requests++;
+          return http.Response.bytes([requests], 200);
+        }),
+      );
+      final url = Uri.parse('https://example.com/c.png');
+      const maxAge = Duration(minutes: 1);
+
+      final first = await cache.fetch(url: url, cacheKey: 'c', maxAge: maxAge);
+      expect(first.downloaded, isTrue);
+      await first.file.setLastModified(
+        DateTime.now().subtract(const Duration(minutes: 5)),
+      );
+
+      final stale = await cache.fetch(
+        url: url,
+        cacheKey: 'c',
+        maxAge: maxAge,
+        staleWhileRevalidate: true,
+      );
+      expect(stale.downloaded, isFalse);
+      expect(await stale.file.readAsBytes(), [1]);
+      final refresh = stale.refresh;
+      expect(refresh, isNotNull);
+
+      final refreshed = await refresh!;
+      expect(refreshed.downloaded, isTrue);
+      expect(requests, 2);
+      expect(await refreshed.file.readAsBytes(), [2]);
+    },
+  );
+
+  test('a failed background refresh keeps the stale result', () async {
+    var requests = 0;
+    final cache = cacheWith(
+      MockClient((request) async {
+        requests++;
+        if (requests == 1) return http.Response.bytes([1], 200);
+        return http.Response('nope', 500);
+      }),
+    );
+    final url = Uri.parse('https://example.com/d.png');
+    const maxAge = Duration(minutes: 1);
+
+    await cache.fetch(url: url, cacheKey: 'd', maxAge: maxAge);
+    await File(
+      '${tempDir.path}/disk_cached_image/d',
+    ).setLastModified(DateTime.now().subtract(const Duration(minutes: 5)));
+
+    final stale = await cache.fetch(
+      url: url,
+      cacheKey: 'd',
+      maxAge: maxAge,
+      staleWhileRevalidate: true,
+    );
+    final refresh = await stale.refresh!;
+
+    expect(requests, 2);
+    expect(refresh.downloaded, isFalse);
+    expect(await refresh.file.readAsBytes(), [1]);
+  });
+
+  test('precache and precacheAll populate the cache', () async {
+    var requests = 0;
+    final cache = cacheWith(
+      MockClient((request) async {
+        requests++;
+        return http.Response.bytes([requests], 200);
+      }),
+    );
+
+    await cache.precache(
+      url: Uri.parse('https://example.com/p1.png'),
+      cacheKey: 'p1',
+    );
+    await cache.precacheAll([
+      (url: Uri.parse('https://example.com/p2.png'), cacheKey: 'p2'),
+      (url: Uri.parse('https://example.com/p3.png'), cacheKey: 'p3'),
+    ]);
+
+    expect(requests, 3);
+    for (final key in ['p1', 'p2', 'p3']) {
+      final hit = await cache.fetch(
+        url: Uri.parse('https://example.com/$key.png'),
+        cacheKey: key,
+      );
+      expect(hit.downloaded, isFalse, reason: key);
+    }
+  });
+
+  test('clearByPattern removes matching entries only', () async {
+    final cache = cacheWith(
+      MockClient((request) async => http.Response.bytes([1], 200)),
+    );
+    await cache.fetch(
+      url: Uri.parse('https://example.com/a.png'),
+      cacheKey: 'a',
+    );
+    await cache.fetch(url: Uri.parse('https://other.com/b.png'), cacheKey: 'b');
+    await cache.fetch(
+      url: Uri.parse('https://cdn.example.net/c.png'),
+      cacheKey: 'c',
+    );
+    final stray = File('${tempDir.path}/disk_cached_image/stray');
+    await stray.writeAsBytes([9]);
+
+    expect(await cache.clearByPattern('https://example.com/'), 1);
+    expect(File('${tempDir.path}/disk_cached_image/a').existsSync(), isFalse);
+    expect(File('${tempDir.path}/disk_cached_image/b').existsSync(), isTrue);
+
+    expect(await cache.clearByPattern(RegExp(r'example\.net')), 1);
+    expect(File('${tempDir.path}/disk_cached_image/c').existsSync(), isFalse);
+    expect(stray.existsSync(), isTrue);
+    expect(await cache.clearByPattern(RegExp('.')), 1);
+    expect(await cache.clearByPattern(RegExp('.')), 0);
+  });
 }

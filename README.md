@@ -66,6 +66,56 @@ Notes:
   seconds by default).
 - `DiskImageCache` accepts a `client` and a `directoryProvider` for tests.
 
+### Revalidation
+
+The cache stores the `ETag` and `Last-Modified` response headers in a JSON
+sidecar under `.metadata/`. When a stale entry has a stored value, the next
+request carries `If-None-Match` or `If-Modified-Since`. A `304` response keeps
+the file and refreshes its timestamp, so the cache does not download the bytes
+again.
+
+### Stale-while-revalidate
+
+Set `staleWhileRevalidate` on the widget to show a stale file at once and
+refresh it in the background:
+
+```dart
+DiskCachedImage(
+  url: 'https://picsum.photos/seed/one/200',
+  cacheKey: 'coin-one',
+  maxAge: const Duration(hours: 1),
+  staleWhileRevalidate: true,
+);
+```
+
+The widget redraws with the refreshed bytes when the refresh finishes. A failed
+refresh keeps the stale image. The service reports the same behavior through
+`result.refresh`.
+
+### Precache
+
+```dart
+await cache.precache(
+  url: Uri.parse('https://picsum.photos/seed/one/200'),
+  cacheKey: 'coin-one',
+);
+
+await cache.precacheAll([
+  (url: Uri.parse('https://picsum.photos/seed/two/200'), cacheKey: 'coin-two'),
+  (url: Uri.parse('https://picsum.photos/seed/three/200'), cacheKey: 'coin-three'),
+]);
+```
+
+### Clear by pattern
+
+```dart
+final int removed = await cache.clearByPattern('https://picsum.photos/seed/');
+final int matched = await cache.clearByPattern(RegExp(r'picsum\.photos'));
+```
+
+A String pattern matches URLs that start with it. Any other pattern matches
+anywhere in the URL. Entries without metadata are kept.
+
 ## Platforms
 
 The package reads and writes files with `dart:io` and `path_provider`. It
