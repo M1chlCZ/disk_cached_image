@@ -20,8 +20,8 @@ Automated publishing needs a package that already has a published version.
 3. Commit and push to `main`.
 4. Create and push an annotated tag:
    `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
-5. The publish workflow repeats the checks and uploads through OIDC. Only a
-   tag push that matches `v{{version}}` can publish.
+5. The publish workflow repeats the checks, uploads through OIDC and creates
+   the GitHub release. Only a tag push that matches `v{{version}}` can publish.
 
 Versions published before this automation have no tags in the repository.
 
