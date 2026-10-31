@@ -402,4 +402,73 @@ void main() {
     expect(await cache.clearByPattern(RegExp('.')), 1);
     expect(await cache.clearByPattern(RegExp('.')), 0);
   });
+
+  test('reports download progress up to one', () async {
+    final cache = cacheWith(
+      MockClient((request) async => http.Response.bytes([1, 2, 3, 4], 200)),
+    );
+    final progress = <double>[];
+    await cache.fetch(
+      url: Uri.parse('https://example.com/a.png'),
+      cacheKey: 'a',
+      onProgress: progress.add,
+    );
+    expect(progress, isNotEmpty);
+    expect(progress.last, 1.0);
+    expect(progress.every((value) => value >= 0 && value <= 1), isTrue);
+  });
+
+  test('prunes least recently used files above maxBytes', () async {
+    var now = DateTime(2026, 11, 5, 12);
+    final cache = DiskImageCache(
+      client: MockClient(
+        (request) async => http.Response.bytes(List<int>.filled(10, 1), 200),
+      ),
+      directoryProvider: () async => tempDir,
+      maxBytes: 25,
+      clock: () => now,
+    );
+    final url = Uri.parse('https://example.com/a.png');
+    await cache.fetch(url: url, cacheKey: 'a');
+    now = now.add(const Duration(seconds: 1));
+    await cache.fetch(url: url, cacheKey: 'b');
+    now = now.add(const Duration(seconds: 1));
+    await cache.fetch(url: url, cacheKey: 'c');
+    final directory = Directory('${tempDir.path}/disk_cached_image');
+    expect(await cache.size(), 20);
+    expect(await File('${directory.path}/a').exists(), isFalse);
+    expect(await File('${directory.path}/b').exists(), isTrue);
+    expect(await File('${directory.path}/c').exists(), isTrue);
+  });
+
+  test('keeps recently served entries ahead of unused ones', () async {
+    var now = DateTime(2026, 11, 5, 12);
+    final cache = DiskImageCache(
+      client: MockClient(
+        (request) async => http.Response.bytes(List<int>.filled(10, 1), 200),
+      ),
+      directoryProvider: () async => tempDir,
+      maxBytes: 25,
+      clock: () => now,
+    );
+    final url = Uri.parse('https://example.com/a.png');
+    await cache.fetch(url: url, cacheKey: 'a');
+    now = now.add(const Duration(seconds: 1));
+    await cache.fetch(url: url, cacheKey: 'b');
+    now = now.add(const Duration(seconds: 1));
+    await cache.fetch(url: url, cacheKey: 'a');
+    now = now.add(const Duration(seconds: 1));
+    await cache.fetch(url: url, cacheKey: 'c');
+    final directory = Directory('${tempDir.path}/disk_cached_image');
+    expect(await File('${directory.path}/a').exists(), isTrue);
+    expect(await File('${directory.path}/b').exists(), isFalse);
+    expect(await File('${directory.path}/c').exists(), isTrue);
+  });
+
+  test('prune does nothing without a limit', () async {
+    final cache = cacheWith(
+      MockClient((request) async => http.Response.bytes([1], 200)),
+    );
+    expect(await cache.prune(), 0);
+  });
 }

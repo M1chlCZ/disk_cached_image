@@ -69,14 +69,25 @@ class DiskImageCache {
     Future<Directory> Function()? directoryProvider,
     this.folderName = 'disk_cached_image',
     this.timeout = const Duration(seconds: 30),
+    this.maxBytes,
+    DateTime Function()? clock,
   }) : _providedClient = client,
        _directoryProvider =
-           directoryProvider ?? getApplicationDocumentsDirectory {
+           directoryProvider ?? getApplicationDocumentsDirectory,
+       _clock = clock ?? DateTime.now {
     _validateKey(folderName, 'folderName');
   }
 
   final http.Client? _providedClient;
   final Future<Directory> Function() _directoryProvider;
+  final DateTime Function() _clock;
+
+  /// The soft limit of the stored bytes.
+  ///
+  /// After a download, the cache deletes least-recently-used entries until the
+  /// stored files fit this limit. A single file larger than the limit stays.
+  /// When null, the cache grows without a limit.
+  final int? maxBytes;
 
   /// Name of the folder that stores the cached files.
   final String folderName;
@@ -155,11 +166,15 @@ class DiskImageCache {
   /// Throws an [ArgumentError] when [cacheKey] is invalid. Throws an
   /// [HttpException] when the server responds with a status code other than
   /// 200 or 304.
+  ///
+  /// [onProgress] receives the downloaded fraction between `0.0` and `1.0`
+  /// when the server reports the content length.
   Future<DiskImageCacheResult> fetch({
     required Uri url,
     required String cacheKey,
     Duration? maxAge,
     bool staleWhileRevalidate = false,
+    void Function(double progress)? onProgress,
   }) async {
     _validateKey(cacheKey, 'cacheKey');
     final file = await _fileFor(cacheKey);
@@ -168,6 +183,7 @@ class DiskImageCache {
     if (exists &&
         (maxAge == null ||
             DateTime.now().difference(stat.modified) <= maxAge)) {
+      await _touch(cacheKey);
       return DiskImageCacheResult(
         file: file,
         downloaded: false,
@@ -189,10 +205,16 @@ class DiskImageCache {
           destination: file,
           cacheKey: cacheKey,
           stale: stale,
+          onProgress: onProgress,
         ),
       );
     }
-    return _startDownload(url: url, destination: file, cacheKey: cacheKey);
+    return _startDownload(
+      url: url,
+      destination: file,
+      cacheKey: cacheKey,
+      onProgress: onProgress,
+    );
   }
 
   /// Downloads [url] and stores it under [cacheKey] without rendering it.
@@ -263,6 +285,70 @@ class DiskImageCache {
     if (await directory.exists()) {
       await directory.delete(recursive: true);
     }
+  }
+
+  /// Deletes least-recently-used entries until the cache fits [maxBytes].
+  ///
+  /// The cache tracks the last access of every entry in its metadata. Entries
+  /// without metadata fall back to their file modification time. Returns the
+  /// number of deleted files. Does nothing when [maxBytes] is null.
+  Future<int> prune() => _prune();
+
+  Future<int> _prune({String? keep}) async {
+    final limit = maxBytes;
+    if (limit == null) {
+      return 0;
+    }
+    final directory = await _cacheDirectory();
+    if (!await directory.exists()) {
+      return 0;
+    }
+    final entries = <({File file, String key, DateTime accessed})>[];
+    var total = 0;
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File || _isTempFile(entity)) {
+        continue;
+      }
+      final segments = entity.uri.pathSegments;
+      final key = segments.isEmpty ? entity.path : segments.last;
+      final stat = await entity.stat();
+      total += stat.size;
+      final lastAccess = (await _readMetadata(key))?.lastAccess;
+      entries.add((
+        file: entity,
+        key: key,
+        accessed: DateTime.tryParse(lastAccess ?? '') ?? stat.modified,
+      ));
+    }
+    if (total <= limit) {
+      return 0;
+    }
+    entries.sort((a, b) => a.accessed.compareTo(b.accessed));
+    var removed = 0;
+    for (final entry in entries) {
+      if (total <= limit) {
+        break;
+      }
+      if (entry.key == keep) {
+        continue;
+      }
+      final length = await entry.file.length();
+      await entry.file.delete();
+      await _deleteMetadata(entry.key);
+      total -= length;
+      removed++;
+    }
+    return removed;
+  }
+
+  String _nowIso() => _clock().toUtc().toIso8601String();
+
+  Future<void> _touch(String cacheKey) async {
+    final metadata = await _readMetadata(cacheKey);
+    if (metadata == null) {
+      return;
+    }
+    await _writeMetadata(cacheKey, metadata.withAccess(_nowIso()));
   }
 
   /// Returns the total size of all cached files in bytes.
@@ -346,6 +432,7 @@ class DiskImageCache {
     required Uri url,
     required File destination,
     required String cacheKey,
+    void Function(double progress)? onProgress,
   }) {
     final path = destination.path;
     final inFlight = _inFlight[path];
@@ -355,7 +442,8 @@ class DiskImageCache {
           url: url,
           destination: destination,
           cacheKey: cacheKey,
-        ).whenComplete(() {
+          onProgress: onProgress,
+        ).timeout(timeout).whenComplete(() {
           _inFlight.remove(path);
         });
     _inFlight[path] = tracked;
@@ -367,12 +455,14 @@ class DiskImageCache {
     required File destination,
     required String cacheKey,
     required DiskImageCacheResult stale,
+    void Function(double progress)? onProgress,
   }) async {
     try {
       return await _startDownload(
         url: url,
         destination: destination,
         cacheKey: cacheKey,
+        onProgress: onProgress,
       );
     } catch (_) {
       return stale;
@@ -383,6 +473,7 @@ class DiskImageCache {
     required Uri url,
     required File destination,
     required String cacheKey,
+    void Function(double progress)? onProgress,
   }) async {
     final exists =
         (await destination.stat()).type != FileSystemEntityType.notFound;
@@ -392,11 +483,14 @@ class DiskImageCache {
     if (etag != null) headers['If-None-Match'] = etag;
     final lastModified = previous?.lastModified;
     if (lastModified != null) headers['If-Modified-Since'] = lastModified;
-    final response = await _client
-        .get(url, headers: headers.isEmpty ? null : headers)
-        .timeout(timeout);
+    final request = http.Request('GET', url);
+    if (headers.isNotEmpty) {
+      request.headers.addAll(headers);
+    }
+    final response = await _client.send(request);
     if (response.statusCode == 304 && previous != null) {
-      await destination.setLastModified(DateTime.now());
+      await destination.setLastModified(_clock());
+      await _touch(cacheKey);
       final stat = await destination.stat();
       return DiskImageCacheResult(
         file: destination,
@@ -416,7 +510,20 @@ class DiskImageCache {
       '${DateTime.now().microsecondsSinceEpoch}',
     );
     try {
-      await tempFile.writeAsBytes(response.bodyBytes, flush: true);
+      final sink = tempFile.openWrite();
+      var received = 0;
+      try {
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          received += chunk.length;
+          final total = response.contentLength;
+          if (onProgress != null && total != null && total > 0) {
+            onProgress(received / total);
+          }
+        }
+      } finally {
+        await sink.close();
+      }
       await _replace(tempFile, destination);
     } catch (_) {
       if (await tempFile.exists()) {
@@ -424,8 +531,18 @@ class DiskImageCache {
       }
       rethrow;
     }
-    await _writeMetadata(cacheKey, _Metadata.fromResponse(url, response));
+    await _writeMetadata(
+      cacheKey,
+      _Metadata.fromResponse(url, response, _nowIso()),
+    );
     final stat = await destination.stat();
+    if (maxBytes != null) {
+      try {
+        await _prune(keep: cacheKey);
+      } catch (_) {
+        // A failed prune must not fail the download.
+      }
+    }
     return DiskImageCacheResult(
       file: destination,
       downloaded: true,
@@ -453,17 +570,37 @@ class DiskImageCache {
 const String _metadataFolderName = '.metadata';
 
 class _Metadata {
-  const _Metadata({required this.url, this.etag, this.lastModified});
+  const _Metadata({
+    required this.url,
+    this.etag,
+    this.lastModified,
+    this.lastAccess,
+  });
 
   final String url;
   final String? etag;
   final String? lastModified;
+  final String? lastAccess;
 
-  static _Metadata fromResponse(Uri url, http.Response response) {
+  _Metadata withAccess(String lastAccess) {
+    return _Metadata(
+      url: url,
+      etag: etag,
+      lastModified: lastModified,
+      lastAccess: lastAccess,
+    );
+  }
+
+  static _Metadata fromResponse(
+    Uri url,
+    http.BaseResponse response,
+    String lastAccess,
+  ) {
     return _Metadata(
       url: url.toString(),
       etag: _headerValue(response.headers['etag']),
       lastModified: _headerValue(response.headers['last-modified']),
+      lastAccess: lastAccess,
     );
   }
 
@@ -475,6 +612,7 @@ class _Metadata {
       url: url,
       etag: _headerValue(raw['etag'] as String?),
       lastModified: _headerValue(raw['lastModified'] as String?),
+      lastAccess: _headerValue(raw['lastAccess'] as String?),
     );
   }
 
@@ -483,6 +621,7 @@ class _Metadata {
       'url': url,
       if (etag != null) 'etag': etag,
       if (lastModified != null) 'lastModified': lastModified,
+      if (lastAccess != null) 'lastAccess': lastAccess,
     };
   }
 
