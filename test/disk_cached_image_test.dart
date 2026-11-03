@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:disk_cached_image/disk_cached_image.dart';
@@ -351,5 +352,77 @@ void main() {
       await _pumpUntil(tester, () => requests == 2);
       await _pumpUntilPixel(tester, const ui.Color(0xFF0000FF));
     });
+  });
+
+  testWidgets('renders from the memory cache', (tester) async {
+    final tempDir = Directory.systemTemp.createTempSync(
+      'disk_cached_image_test',
+    );
+    addTearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+    final memoryCache = MemoryImageCache();
+    memoryCache.put('a', Uint8List.fromList(_pixelPng));
+    final cache = DiskImageCache(
+      client: MockClient(
+        (request) async => http.Response.bytes(_pixelPng, 200),
+      ),
+      directoryProvider: () async => tempDir,
+    );
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DiskCachedImage(
+            url: 'https://example.com/a.png',
+            cacheKey: 'a',
+            cache: cache,
+            memoryCache: memoryCache,
+          ),
+        ),
+      );
+      await _pumpUntilImage(tester);
+      final file = File('${tempDir.path}/disk_cached_image/a');
+      for (var i = 0; i < 200 && !file.existsSync(); i++) {
+        await tester.pump();
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(file.existsSync(), isTrue);
+    });
+    final image = tester.widget<Image>(find.byType(Image));
+    expect(image.image, isA<MemoryImage>());
+  });
+
+  testWidgets('fills the memory cache after a load', (tester) async {
+    final tempDir = Directory.systemTemp.createTempSync(
+      'disk_cached_image_test',
+    );
+    addTearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+    final memoryCache = MemoryImageCache();
+    final cache = DiskImageCache(
+      client: MockClient(
+        (request) async => http.Response.bytes(_pixelPng, 200),
+      ),
+      directoryProvider: () async => tempDir,
+    );
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DiskCachedImage(
+            url: 'https://example.com/a.png',
+            cacheKey: 'a',
+            cache: cache,
+            memoryCache: memoryCache,
+          ),
+        ),
+      );
+      await _pumpUntilImage(tester);
+      for (var i = 0; i < 200 && memoryCache.get('a') == null; i++) {
+        await tester.pump();
+        await Future<void>.delayed(Duration.zero);
+      }
+    });
+    expect(memoryCache.get('a'), isNotNull);
   });
 }

@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import 'disk_image_cache.dart';
+import 'memory_image_cache.dart';
 
 /// A widget that displays a network image from a [DiskImageCache].
 ///
@@ -21,6 +25,8 @@ class DiskCachedImage extends StatefulWidget {
     this.maxAge,
     this.staleWhileRevalidate = false,
     this.cache,
+    this.memoryCache,
+    this.onProgress,
   });
 
   /// The URL to download the image from.
@@ -70,6 +76,19 @@ class DiskCachedImage extends StatefulWidget {
   /// that its HTTP client can pool connections.
   final DiskImageCache? cache;
 
+  /// An optional memory tier of recently decoded images.
+  ///
+  /// When set, the widget renders from memory instead of decoding the file
+  /// again and fills the store after a load. Share one [MemoryImageCache]
+  /// across widgets to keep a small set of images hot.
+  final MemoryImageCache? memoryCache;
+
+  /// Receives the downloaded fraction between `0.0` and `1.0`.
+  ///
+  /// Only calls on a real download report progress, and only when the server
+  /// sends the content length.
+  final void Function(double progress)? onProgress;
+
   @override
   State<DiskCachedImage> createState() => _DiskCachedImageState();
 }
@@ -108,6 +127,7 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
   void didUpdateWidget(DiskCachedImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     final cacheChanged = widget.cache != oldWidget.cache;
+    final memoryChanged = widget.memoryCache != oldWidget.memoryCache;
     if (cacheChanged) {
       _cache = widget.cache ?? DiskImageCache();
     }
@@ -115,7 +135,8 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
         widget.cacheKey != oldWidget.cacheKey ||
         widget.maxAge != oldWidget.maxAge ||
         widget.staleWhileRevalidate != oldWidget.staleWhileRevalidate ||
-        cacheChanged) {
+        cacheChanged ||
+        memoryChanged) {
       _file = _load();
     }
   }
@@ -140,12 +161,15 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
           cacheKey: widget.cacheKey,
           maxAge: widget.maxAge,
           staleWhileRevalidate: widget.staleWhileRevalidate,
+          onProgress: widget.onProgress,
         )
         .then((result) {
+          _warmMemory(result);
           final refresh = result.refresh;
           if (refresh != null) {
             refresh.then((refreshed) {
               if (!mounted || generation != _generation) return;
+              _warmMemory(refreshed);
               setState(() {
                 _file = Future.value(refreshed);
               });
@@ -155,8 +179,44 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
         });
   }
 
+  void _warmMemory(DiskImageCacheResult result) {
+    final memoryCache = widget.memoryCache;
+    if (memoryCache == null) {
+      return;
+    }
+    unawaited(_readAndStore(memoryCache, widget.cacheKey, result.file));
+  }
+
+  Future<void> _readAndStore(
+    MemoryImageCache memoryCache,
+    String key,
+    File file,
+  ) async {
+    try {
+      final bytes = await file.readAsBytes();
+      if (!mounted || widget.cacheKey != key) {
+        return;
+      }
+      memoryCache.put(key, bytes);
+      setState(() {});
+    } catch (_) {
+      // The file may be evicted concurrently; the widget keeps the file image.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final memory = widget.memoryCache?.get(widget.cacheKey);
+    if (memory != null) {
+      return Image.memory(
+        memory,
+        gaplessPlayback: true,
+        width: widget.width,
+        height: widget.height,
+        fit: widget.fit,
+        errorBuilder: widget.errorBuilder,
+      );
+    }
     return FutureBuilder<DiskImageCacheResult>(
       future: _file,
       builder: (context, snapshot) {
