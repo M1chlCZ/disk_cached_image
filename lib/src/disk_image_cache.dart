@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -99,6 +100,8 @@ class DiskImageCache {
   final Duration timeout;
 
   late final http.Client _client = _providedClient ?? http.Client();
+
+  Future<void> _pruneTail = Future<void>.value();
 
   static final Map<String, Future<DiskImageCacheResult>> _inFlight = {};
 
@@ -341,6 +344,24 @@ class DiskImageCache {
     return removed;
   }
 
+  Future<void> _pruneAfterDownload(String cacheKey) async {
+    final next = _pruneTail.then((_) => _prune(keep: cacheKey));
+    _pruneTail = next.then<void>((_) {}, onError: (Object _) {});
+    try {
+      await next;
+    } catch (_) {
+      // A failed prune must not fail the download.
+    }
+  }
+
+  Future<void> _discardBody(http.StreamedResponse response) async {
+    try {
+      await response.stream.drain<void>();
+    } catch (_) {
+      // The response is being dropped; a failed drain changes nothing.
+    }
+  }
+
   String _nowIso() => _clock().toUtc().toIso8601String();
 
   Future<void> _touch(String cacheKey) async {
@@ -437,15 +458,27 @@ class DiskImageCache {
     final path = destination.path;
     final inFlight = _inFlight[path];
     if (inFlight != null) return inFlight;
+    final cancelled = Completer<void>();
     final tracked =
         _download(
-          url: url,
-          destination: destination,
-          cacheKey: cacheKey,
-          onProgress: onProgress,
-        ).timeout(timeout).whenComplete(() {
-          _inFlight.remove(path);
-        });
+              url: url,
+              destination: destination,
+              cacheKey: cacheKey,
+              onProgress: onProgress,
+              cancelled: cancelled,
+            )
+            .timeout(
+              timeout,
+              onTimeout: () {
+                if (!cancelled.isCompleted) {
+                  cancelled.complete();
+                }
+                throw TimeoutException('Request to $url timed out', timeout);
+              },
+            )
+            .whenComplete(() {
+              _inFlight.remove(path);
+            });
     _inFlight[path] = tracked;
     return tracked;
   }
@@ -474,6 +507,7 @@ class DiskImageCache {
     required File destination,
     required String cacheKey,
     void Function(double progress)? onProgress,
+    required Completer<void> cancelled,
   }) async {
     final exists =
         (await destination.stat()).type != FileSystemEntityType.notFound;
@@ -489,6 +523,7 @@ class DiskImageCache {
     }
     final response = await _client.send(request);
     if (response.statusCode == 304 && previous != null) {
+      await _discardBody(response);
       await destination.setLastModified(_clock());
       await _touch(cacheKey);
       final stat = await destination.stat();
@@ -499,6 +534,7 @@ class DiskImageCache {
       );
     }
     if (response.statusCode != 200) {
+      await _discardBody(response);
       throw HttpException(
         'Request to $url failed with status ${response.statusCode}.',
         uri: url,
@@ -511,18 +547,32 @@ class DiskImageCache {
     );
     try {
       final sink = tempFile.openWrite();
+      unawaited(sink.done.catchError((Object _, StackTrace _) {}));
       var received = 0;
+      final progress = onProgress;
+      final total = response.contentLength;
+      final encoding = (response.headers['content-encoding'] ?? '')
+          .toLowerCase();
+      final expected =
+          total != null &&
+              total > 0 &&
+              (encoding.isEmpty || encoding == 'identity')
+          ? total
+          : null;
       try {
         await for (final chunk in response.stream) {
           sink.add(chunk);
           received += chunk.length;
-          final total = response.contentLength;
-          if (onProgress != null && total != null && total > 0) {
-            onProgress(received / total);
+          if (progress != null && expected != null) {
+            progress((received / expected).clamp(0.0, 1.0));
           }
         }
       } finally {
         await sink.close();
+      }
+      if (cancelled.isCompleted) {
+        await tempFile.delete();
+        throw TimeoutException('Request to $url was cancelled');
       }
       await _replace(tempFile, destination);
     } catch (_) {
@@ -537,11 +587,7 @@ class DiskImageCache {
     );
     final stat = await destination.stat();
     if (maxBytes != null) {
-      try {
-        await _prune(keep: cacheKey);
-      } catch (_) {
-        // A failed prune must not fail the download.
-      }
+      await _pruneAfterDownload(cacheKey);
     }
     return DiskImageCacheResult(
       file: destination,

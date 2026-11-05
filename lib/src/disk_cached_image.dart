@@ -120,7 +120,7 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
   void initState() {
     super.initState();
     _cache = widget.cache ?? DiskImageCache();
-    _file = _load();
+    _startLoad();
   }
 
   @override
@@ -137,8 +137,14 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
         widget.staleWhileRevalidate != oldWidget.staleWhileRevalidate ||
         cacheChanged ||
         memoryChanged) {
-      _file = _load();
+      _startLoad();
     }
+  }
+
+  void _startLoad() {
+    final future = _load();
+    _file = future;
+    unawaited(future.then<void>((_) {}, onError: (Object _, StackTrace _) {}));
   }
 
   Future<DiskImageCacheResult> _load() {
@@ -155,21 +161,22 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
 
   Future<DiskImageCacheResult> _fetch(Uri url) {
     final generation = ++_generation;
+    final key = widget.cacheKey;
     return _cache
         .fetch(
           url: url,
-          cacheKey: widget.cacheKey,
+          cacheKey: key,
           maxAge: widget.maxAge,
           staleWhileRevalidate: widget.staleWhileRevalidate,
           onProgress: widget.onProgress,
         )
         .then((result) {
-          _warmMemory(result);
+          _warmMemory(result, key, generation);
           final refresh = result.refresh;
           if (refresh != null) {
             refresh.then((refreshed) {
               if (!mounted || generation != _generation) return;
-              _warmMemory(refreshed);
+              _warmMemory(refreshed, key, generation);
               setState(() {
                 _file = Future.value(refreshed);
               });
@@ -179,22 +186,23 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
         });
   }
 
-  void _warmMemory(DiskImageCacheResult result) {
+  void _warmMemory(DiskImageCacheResult result, String key, int generation) {
     final memoryCache = widget.memoryCache;
     if (memoryCache == null) {
       return;
     }
-    unawaited(_readAndStore(memoryCache, widget.cacheKey, result.file));
+    unawaited(_readAndStore(memoryCache, key, generation, result.file));
   }
 
   Future<void> _readAndStore(
     MemoryImageCache memoryCache,
     String key,
+    int generation,
     File file,
   ) async {
     try {
       final bytes = await file.readAsBytes();
-      if (!mounted || widget.cacheKey != key) {
+      if (!mounted || generation != _generation || widget.cacheKey != key) {
         return;
       }
       memoryCache.put(key, bytes);

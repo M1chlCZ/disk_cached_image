@@ -6,6 +6,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+class _SlowClient extends http.BaseClient {
+  final Completer<void> release = Completer<void>();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final controller = StreamController<List<int>>();
+    unawaited(
+      release.future.then((_) {
+        controller.add(<int>[1, 2, 3]);
+        controller.close();
+      }),
+    );
+    return http.StreamedResponse(
+      controller.stream,
+      200,
+      contentLength: 3,
+      headers: {'content-type': 'image/png'},
+    );
+  }
+}
+
 void main() {
   late Directory tempDir;
 
@@ -470,5 +491,46 @@ void main() {
       MockClient((request) async => http.Response.bytes([1], 200)),
     );
     expect(await cache.prune(), 0);
+  });
+
+  test('a timed out download does not commit after the timeout', () async {
+    final client = _SlowClient();
+    final cache = DiskImageCache(
+      client: client,
+      directoryProvider: () async => tempDir,
+      timeout: const Duration(milliseconds: 20),
+    );
+    final url = Uri.parse('https://example.com/slow.png');
+
+    await expectLater(
+      cache.fetch(url: url, cacheKey: 'slow'),
+      throwsA(isA<TimeoutException>()),
+    );
+    client.release.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    final file = File('${tempDir.path}/disk_cached_image/slow');
+    expect(await file.exists(), isFalse);
+  });
+
+  test('skips progress for compressed responses', () async {
+    final cache = cacheWith(
+      MockClient(
+        (request) async => http.Response.bytes(
+          [1, 2, 3, 4],
+          200,
+          headers: {'content-type': 'image/png', 'content-encoding': 'gzip'},
+        ),
+      ),
+    );
+    final progress = <double>[];
+
+    await cache.fetch(
+      url: Uri.parse('https://example.com/a.png'),
+      cacheKey: 'a',
+      onProgress: progress.add,
+    );
+
+    expect(progress, isEmpty);
   });
 }
