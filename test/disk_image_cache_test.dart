@@ -533,4 +533,45 @@ void main() {
 
     expect(progress, isEmpty);
   });
+
+  test('lists entries and clears the ones unused for longer than the window',
+      () async {
+    var now = DateTime.utc(2026, 10, 31, 12);
+    final cache = DiskImageCache(
+      client: MockClient(
+        (request) async => http.Response.bytes([1, 2, 3], 200),
+      ),
+      directoryProvider: () async => tempDir,
+      clock: () => now,
+    );
+
+    await cache.fetch(
+      url: Uri.parse('https://example.com/old.png'),
+      cacheKey: 'old',
+    );
+    now = now.add(const Duration(hours: 1));
+    await cache.fetch(
+      url: Uri.parse('https://example.com/new.png'),
+      cacheKey: 'new',
+    );
+
+    final entries = await cache.entries();
+    expect(entries.map((entry) => entry.cacheKey), ['old', 'new']);
+    expect(entries.first.sizeBytes, 3);
+    expect(entries.first.file.existsSync(), isTrue);
+
+    now = now.add(const Duration(hours: 1));
+    expect(await cache.clearOlderThan(const Duration(minutes: 90)), 1);
+    expect((await cache.entries()).single.cacheKey, 'new');
+  });
+
+  test('clearOlderThan leaves the cache alone for a non-positive window', () async {
+    final cache = cacheWith(
+      MockClient((request) async => http.Response.bytes([1], 200)),
+    );
+    await cache.fetch(url: Uri.parse('https://example.com/a.png'), cacheKey: 'a');
+
+    expect(await cache.clearOlderThan(Duration.zero), 0);
+    expect(await cache.entries(), hasLength(1));
+  });
 }

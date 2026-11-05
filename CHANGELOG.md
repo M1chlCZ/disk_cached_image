@@ -10,6 +10,9 @@
   content length.
 - The cache accepts a `clock` argument for deterministic access times in
   tests.
+- Add `entries()` and `clearOlderThan()`: list the cached files with their
+  size and access time, and expire files the cache has not used for a given
+  duration.
 
 ## 0.2.0
 

@@ -41,6 +41,35 @@ class DiskImageCacheResult {
   final Future<DiskImageCacheResult>? refresh;
 }
 
+/// One file in a [DiskImageCache].
+class DiskImageCacheEntry {
+  /// Creates a cache entry.
+  const DiskImageCacheEntry({
+    required this.cacheKey,
+    required this.file,
+    required this.sizeBytes,
+    required this.modified,
+    required this.lastAccess,
+  });
+
+  /// The key the file is stored under.
+  final String cacheKey;
+
+  /// The cached file.
+  final File file;
+
+  /// The file size in bytes.
+  final int sizeBytes;
+
+  /// The modification time of [file].
+  final DateTime modified;
+
+  /// The last time the cache served or wrote the file.
+  ///
+  /// Entries without metadata use [modified].
+  final DateTime lastAccess;
+}
+
 /// A disk-backed cache for network images.
 ///
 /// The cache stores files in a dedicated folder and names each file by the
@@ -386,6 +415,58 @@ class DiskImageCache {
       }
     }
     return total;
+  }
+
+  /// Lists the files in the cache, oldest access first.
+  ///
+  /// Entries without metadata report their file modification time as
+  /// [DiskImageCacheEntry.lastAccess]. Temporary files from interrupted
+  /// downloads are not listed. Returns an empty list when the cache folder does
+  /// not exist.
+  Future<List<DiskImageCacheEntry>> entries() async {
+    final directory = await _cacheDirectory();
+    if (!await directory.exists()) return const [];
+    final entries = <DiskImageCacheEntry>[];
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File || _isTempFile(entity)) continue;
+      final segments = entity.uri.pathSegments;
+      final cacheKey = segments.isEmpty ? entity.path : segments.last;
+      final stat = await entity.stat();
+      final lastAccess = (await _readMetadata(cacheKey))?.lastAccess;
+      entries.add(
+        DiskImageCacheEntry(
+          cacheKey: cacheKey,
+          file: entity,
+          sizeBytes: stat.size,
+          modified: stat.modified,
+          lastAccess:
+              DateTime.tryParse(lastAccess ?? '') ?? stat.modified,
+        ),
+      );
+    }
+    entries.sort((a, b) {
+      final byAccess = a.lastAccess.compareTo(b.lastAccess);
+      return byAccess != 0 ? byAccess : a.cacheKey.compareTo(b.cacheKey);
+    });
+    return entries;
+  }
+
+  /// Deletes cached files that were not served or written for [age].
+  ///
+  /// The cache compares [DiskImageCacheEntry.lastAccess] with the current
+  /// clock value. A non-positive [age] deletes nothing. Returns the number of
+  /// deleted files.
+  Future<int> clearOlderThan(Duration age) async {
+    if (age <= Duration.zero) return 0;
+    final cutoff = _clock().subtract(age);
+    var removed = 0;
+    for (final entry in await entries()) {
+      if (entry.lastAccess.isAfter(cutoff)) continue;
+      await entry.file.delete();
+      await _deleteMetadata(entry.cacheKey);
+      removed++;
+    }
+    return removed;
   }
 
   Future<Directory> _cacheDirectory() async {

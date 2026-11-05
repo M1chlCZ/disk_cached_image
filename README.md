@@ -6,7 +6,8 @@ serves it from disk on later builds and app launches.
 ## Features
 
 - `DiskCachedImage` widget that renders a cached file
-- `DiskImageCache` service with `fetch`, `evict`, `clear` and `size`
+- `DiskImageCache` service with `fetch`, `evict`, `clear`, `size` and
+  `entries`
 - TTL refresh through `maxAge`
 - Atomic writes: the cache writes a temporary file, then renames it
 - Single-flight downloads, so concurrent fetches for one key share a request
@@ -132,6 +133,25 @@ await cache.prune(); // enforces the limit now
 ```
 
 One file larger than the limit stays in the cache.
+
+### Inspect and expire entries
+
+`entries()` lists the files with their size, modification time and last access
+time, oldest access first. `clearOlderThan` deletes the files that the cache
+has not served or written for a while, for example to expire images that a user
+has not looked at recently:
+
+```dart
+for (final entry in await cache.entries()) {
+  print('${entry.cacheKey}: ${entry.sizeBytes} bytes');
+}
+
+final int expired = await cache.clearOlderThan(const Duration(days: 30));
+```
+
+Temporary files from interrupted downloads are never listed. An entry without
+metadata reports its modification time as the last access. A non-positive
+duration deletes nothing.
 
 ### Memory tier
 
