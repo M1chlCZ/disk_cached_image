@@ -12,6 +12,9 @@ and serves them from disk on later builds and app launches.
 - Single-flight downloads: concurrent fetches for one key share one request
 - Cache key validation against path traversal and Windows device names
 - Gapless refresh: a stale image is replaced without a blank frame
+- Optional byte limit with least-recently-used eviction
+- Optional memory tier of recently decoded images
+- Download progress through `onProgress`
 
 ## Install
 
@@ -115,6 +118,55 @@ final int matched = await cache.clearByPattern(RegExp(r'picsum\.photos'));
 
 A String pattern matches URLs that start with it. Any other pattern matches
 anywhere in the URL. Entries without metadata are kept.
+
+### Size limit
+
+Set `maxBytes` to keep the cache folder bounded. After every download, the
+cache deletes the least recently used files until the total fits the limit.
+Each entry stores its access time in the metadata sidecar; entries without
+metadata fall back to the file modification time.
+
+```dart
+final cache = DiskImageCache(maxBytes: 50 << 20); // 50 MiB
+await cache.prune(); // enforces the limit now
+```
+
+One file larger than the limit stays in the cache.
+
+### Memory tier
+
+`MemoryImageCache` keeps recently decoded image bytes in memory. Pass one
+shared instance to the widgets to skip disk reads on rebuilds:
+
+```dart
+final memoryCache = MemoryImageCache(maxBytes: 16 << 20);
+
+DiskCachedImage(
+  url: 'https://picsum.photos/seed/one/200',
+  cacheKey: 'coin-one',
+  cache: cache,
+  memoryCache: memoryCache,
+);
+```
+
+The store drops the least recently used images when the byte limit would be
+exceeded. `DiskCachedImage` renders from memory when the bytes are present and
+fills the store after a load.
+
+### Download progress
+
+Pass `onProgress` to the cache or the widget to follow a download:
+
+```dart
+DiskCachedImage(
+  url: 'https://picsum.photos/seed/one/200',
+  cacheKey: 'coin-one',
+  onProgress: (progress) => print('${(progress * 100).round()} %'),
+);
+```
+
+Progress is only reported during a real download and only when the server
+sends the content length.
 
 ## Platforms
 

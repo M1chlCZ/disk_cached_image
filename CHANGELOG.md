@@ -1,3 +1,16 @@
+## 0.3.0
+
+- Add `maxBytes` and `prune()`: the cache deletes least recently used files
+  until the stored bytes fit the limit. Entries track their last access in
+  the metadata sidecar.
+- Add `MemoryImageCache`, an LRU store of decoded image bytes, and the
+  `memoryCache` argument on `DiskCachedImage`.
+- Add `onProgress` to `fetch` and `DiskCachedImage`. Downloads now stream the
+  response body and report the downloaded fraction when the server sends the
+  content length.
+- The cache accepts a `clock` argument for deterministic access times in
+  tests.
+
 ## 0.2.0
 
 - HTTP revalidation: the cache stores ETag and Last-Modified values and sends
