@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'disk_image_cache.dart';
 import 'memory_image_cache.dart';
